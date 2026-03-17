@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description"
+    content="Flight Delay Prediction System — Real-time airline network delay propagation using Floyd-Warshall and BFS algorithms." />
+  <title>Flight Delay Prediction System | Airline Network Monitoring</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="style.css" />
+  <!-- aircraft overlay injected via JS; no extra stylesheet needed -->
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+     CINEMATIC LOADING SCREEN — Airplane Window Experience
+════════════════════════════════════════════════════════════════════════ -->
+  <div id="loader">
+
+    <!-- Full-bleed cabin background -->
+    <div class="loader-cabin-bg"></div>
+
+    <!-- Sky/cloud layer that drifts slowly -->
+    <div class="loader-sky-layer">
+      <div class="loader-cloud-drift"></div>
+      <div class="loader-sun-glow"></div>
+    </div>
+
+    <!-- The airplane window frame -->
+    <div class="loader-window-wrap">
+      <div class="loader-window-frame">
+        <div class="loader-window-glass">
+          <!-- Inner cloud parallax inside the glass -->
+          <div class="glass-cloud glass-cloud-1"></div>
+          <div class="glass-cloud glass-cloud-2"></div>
+          <div class="glass-sun-burst"></div>
+        </div>
+        <!-- Window rim reflection line -->
+        <div class="window-rim-shine"></div>
+      </div>
+    </div>
+
+    <!-- Central text block -->
+    <div class="loader-title-block">
+      <div class="loader-tag cyber-flicker" id="loader-tag">DAA PROJECT</div>
+      <div class="loader-title">
+        <span class="title-line" id="tline1">FLIGHT DELAY</span>
+        <span class="title-line accent" id="tline2">PREDICTION</span>
+        <span class="title-line" id="tline3">SYSTEM</span>
+      </div>
+      <div class="loader-sub" id="loader-sub">Airline Network Delay Propagation Simulator</div>
+    </div>
+
+    <!-- Progress section -->
+    <div class="loader-progress-section">
+      <div class="loader-status-msg" id="loader-status">Initialising systems…</div>
+      <div class="loader-bar-container">
+        <div class="loader-bar-track">
+          <div class="loader-bar-fill" id="loader-bar"></div>
+          <div class="loader-bar-shimmer"></div>
+        </div>
+        <span class="loader-pct" id="loader-pct">0%</span>
+      </div>
+      <div class="loader-modules" id="loader-modules">
+        <span class="mod-item" id="mod-data">● Data Loader</span>
+        <span class="mod-item" id="mod-graph">● Graph Builder</span>
+        <span class="mod-item" id="mod-fw">● Floyd-Warshall</span>
+        <span class="mod-item" id="mod-sim">● Propagation Engine</span>
+        <span class="mod-item" id="mod-dash">● Dashboard</span>
+      </div>
+    </div>
+
+    <!-- Bottom decoration -->
+    <div class="loader-footer">
+      <div class="footer-line"><span class="cyber-flicker">SYSTEM STATUS:</span> <span
+          style="color:var(--green)">ONLINE</span></div>
+      <div class="footer-line">v2.0 &nbsp;·&nbsp; 2026 &nbsp;·&nbsp; DAA COURSE PROJECT</div>
+    </div>
+
+    <!-- Corner decorations -->
+    <div class="corner-decor corner-tl"></div>
+    <div class="corner-decor corner-tr"></div>
+    <div class="corner-decor corner-bl"></div>
+    <div class="corner-decor corner-br"></div>
+  </div>
+  <!-- /loader -->
+
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+     MAIN DASHBOARD APP
+════════════════════════════════════════════════════════════════════════ -->
+  <div id="app" class="app-hidden">
+
+    <!-- Particle background canvas (behind panels) -->
+    <canvas id="particle-canvas"></canvas>
+
+    <!-- Module depth label — updates on tab switch -->
+    <div id="module-depth-label" class="module-depth-label"></div>
+
+    <!-- Rich hover tooltip (positioned by JS) -->
+    <div id="airport-tooltip" class="airport-tooltip hidden">
+      <div class="tooltip-header">
+        <span class="tooltip-iata" id="tip-iata"></span>
+        <span class="tooltip-city" id="tip-city"></span>
+      </div>
+      <div class="tooltip-row"><span class="tip-label">Connected Flights</span><span class="tip-val"
+          id="tip-flights"></span></div>
+      <div class="tooltip-row"><span class="tip-label">Avg Delay</span><span class="tip-val" id="tip-delay"></span>
+      </div>
+      <div class="tooltip-row"><span class="tip-label">Status</span><span class="tip-val" id="tip-status"></span></div>
+    </div>
+
+    <!-- ── TOP HEADER ── -->
+    <header id="header">
+      <div class="header-brand">
+        <div class="brand-icon pulse-icon">✈</div>
+        <div>
+          <div class="brand-title">Flight Delay Prediction System</div>
+          <div class="brand-sub">DAA PROJECT · AIRLINE NETWORK DELAY PROPAGATION</div>
+        </div>
+      </div>
+
+      <div class="hud-stats">
+        <div class="hud-stat">
+          <span class="hud-stat-label">Airports</span>
+          <span class="hud-stat-value" id="hud-airports">—</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">Routes</span>
+          <span class="hud-stat-value" id="hud-routes">—</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">Graph Build</span>
+          <span class="hud-stat-value" id="hud-build-ms">—</span>
+        </div>
+      </div>
+
+      <div class="header-right">
+        <span id="hud-clock">00:00:00</span>
+        <div class="connection-badge">
+          <span class="conn-dot connecting" id="conn-dot"></span>
+          <span id="conn-text">Connecting…</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- ── MAIN ── -->
+    <div id="main">
+
+      <!-- Left: tabs + panels -->
+      <div id="left-col">
+
+        <nav class="tab-bar" role="tablist">
+          <button class="tab-btn active" data-tab="map" role="tab" title="[1]">🗺 Network Map</button>
+          <button class="tab-btn" data-tab="propagation" role="tab" title="[2]">⚡ Delay Propagation</button>
+          <button class="tab-btn" data-tab="shortest" role="tab" title="[3]">🛤 Shortest Path</button>
+          <button class="tab-btn" data-tab="performance" role="tab" title="[4]">📊 Performance</button>
+          <span class="tab-hint">Keys: 1 · 2 · 3 · 4</span>
+        </nav>
+
+        <!-- TAB 1: Network Map -->
+        <div class="tab-panel active" id="tab-map" role="tabpanel">
+          <div id="map-container">
+            <canvas id="network-canvas"></canvas>
+            <div class="map-overlay-label">LIVE AIRLINE NETWORK — 60 FPS</div>
+            <div class="map-module-badge">MODULE 01 · NETWORK GRAPH</div>
+            <div class="map-hint">Scroll to zoom · Drag to pan · Hover airport for info · Click to highlight routes
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: Delay Propagation -->
+        <div class="tab-panel" id="tab-propagation" role="tabpanel">
+          <div class="split-left">
+            <canvas id="prop-canvas"></canvas>
+            <div class="map-overlay-label">DELAY PROPAGATION ANIMATION</div>
+            <div class="map-module-badge">MODULE 04 · BFS CASCADE</div>
+          </div>
+          <div class="split-right">
+            <div class="panel-section">
+              <h2 class="section-title">Simulate Delay</h2>
+              <div class="form-row">
+                <div>
+                  <label for="prop-airport">Seed Airport</label>
+                  <select id="prop-airport"></select>
+                </div>
+                <div>
+                  <label for="prop-weather">Weather Override</label>
+                  <select id="prop-weather">
+                    <option value="0">☀ Clear (0)</option>
+                    <option value="1">🌧 Rain (1)</option>
+                    <option value="2">🌫 Fog (2)</option>
+                    <option value="3" selected>⛈ Storm (3)</option>
+                  </select>
+                </div>
+              </div>
+              <div class="form-row">
+                <div>
+                  <label for="prop-delay">Delay (minutes)</label>
+                  <input type="number" id="prop-delay" value="45" min="1" max="300" />
+                </div>
+                <div>
+                  <label for="prop-threshold">Threshold</label>
+                  <input type="number" id="prop-threshold" value="15" min="1" max="100" />
+                </div>
+              </div>
+              <div class="speed-row">
+                <label for="prop-speed">Speed</label>
+                <input type="range" id="prop-speed" min="0.5" max="4" step="0.5" value="1" style="flex:1;" />
+                <span class="speed-label-val" id="prop-speed-label">1.0×</span>
+              </div>
+              <button class="btn btn-red glow-btn" id="prop-run-btn">⚡ RUN SIMULATION</button>
+              <div><span class="status-badge status-idle" id="prop-status">Ready</span></div>
+            </div>
+            <div class="panel-section">
+              <h2 class="section-title">Propagation Chain</h2>
+              <div class="chain-scroll">
+                <ul id="prop-chain-list"></ul>
+              </div>
+            </div>
+            <div class="panel-section panel-scroll">
+              <h2 class="section-title">Impact Statistics</h2>
+              <div id="prop-stats"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: Shortest Path -->
+        <div class="tab-panel" id="tab-shortest" role="tabpanel">
+          <div class="split-left">
+            <canvas id="sp-canvas"></canvas>
+            <div class="map-overlay-label">FLOYD-WARSHALL SHORTEST PATH</div>
+            <div class="map-module-badge">MODULE 03 · SHORTEST PATH</div>
+          </div>
+          <div class="split-right">
+            <div class="panel-section">
+              <h2 class="section-title">Select Route</h2>
+              <div class="form-row">
+                <div>
+                  <label for="sp-from">Origin</label>
+                  <select id="sp-from"></select>
+                </div>
+                <div>
+                  <label for="sp-to">Destination</label>
+                  <select id="sp-to"></select>
+                </div>
+              </div>
+              <button class="btn btn-green glow-btn" id="sp-find-btn">🛤 FIND SHORTEST PATH</button>
+              <div><span class="status-badge status-idle" id="sp-status">Select airports and click Find</span></div>
+              <div id="sp-time-info"></div>
+            </div>
+            <div class="panel-section">
+              <h2 class="section-title">Shortest Path</h2>
+              <div id="sp-path-string"></div>
+              <div class="cost-summary">
+                <span class="cost-summary-label">Total Cost</span>
+                <span class="cost-summary-val" id="sp-total-cost">—</span>
+                <span style="color:var(--text-secondary);font-size:11px">minutes</span>
+              </div>
+            </div>
+            <div class="panel-section panel-scroll">
+              <h2 class="section-title">Hop Details</h2>
+              <div id="sp-table"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 4: Performance -->
+        <div class="tab-panel" id="tab-performance" role="tabpanel">
+          <div class="perf-module-header">
+            <div class="map-module-badge" style="position:static;margin-bottom:8px;">MODULE 05 · PERFORMANCE BENCHMARKS
+            </div>
+            <h2 class="section-title">Startup Algorithm Times</h2>
+            <div id="perf-startup-stats"></div>
+          </div>
+          <div class="perf-grid" style="overflow-y:auto;flex:1;">
+            <div class="chart-card"><canvas id="chart-fw"></canvas></div>
+            <div class="chart-card"><canvas id="chart-graph"></canvas></div>
+            <div class="chart-card" style="grid-column:1/-1;"><canvas id="chart-accuracy"></canvas></div>
+          </div>
+        </div>
+      </div><!-- /left-col -->
+
+      <!-- Right panel: always visible controls -->
+      <div id="right-col">
+        <div class="panel-section">
+          <h2 class="section-title">Quick Controls</h2>
+          <div class="controls-list">
+            <div class="ctrl-item"><span class="ctrl-key">⇐⇒</span> Drag to pan</div>
+            <div class="ctrl-item"><span class="ctrl-key">⇕</span> Scroll to zoom</div>
+            <div class="ctrl-item"><span class="ctrl-key">↗</span> Hover → tooltip</div>
+            <div class="ctrl-item"><span class="ctrl-key">●</span> Click → highlight routes</div>
+            <div class="ctrl-item"><span class="ctrl-key">1–4</span> Switch tabs</div>
+          </div>
+        </div>
+
+        <div class="panel-section">
+          <h2 class="section-title">Algorithm Summary</h2>
+          <div class="algo-list">
+            <div class="algo-item"><span class="algo-step">Step 1</span><span class="algo-name">Data Loading</span><span
+                class="algo-complexity">O(E)</span></div>
+            <div class="algo-item"><span class="algo-step">Step 2</span><span class="algo-name">Graph Build</span><span
+                class="algo-complexity green">O(V+E)</span></div>
+            <div class="algo-item"><span class="algo-step">Step 3</span><span
+                class="algo-name">Floyd-Warshall</span><span class="algo-complexity cyan">O(V³)</span></div>
+            <div class="algo-item"><span class="algo-step">Step 4</span><span class="algo-name">Delay BFS</span><span
+                class="algo-complexity orange">O(V+E)</span></div>
+            <div class="algo-item"><span class="algo-step">Step 5</span><span class="algo-name">Prediction</span><span
+                class="algo-complexity">O(E)</span></div>
+          </div>
+        </div>
+
+        <div class="panel-section" style="flex:1;overflow-y:auto;">
+          <h2 class="section-title">Legend</h2>
+          <div class="legend-list">
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--cyan);box-shadow:0 0 8px var(--cyan)"></div><span>Normal
+                Airport</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--red);box-shadow:0 0 8px var(--red)"></div><span>Delayed /
+                Seed</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot" style="background:var(--orange);box-shadow:0 0 8px var(--orange)"></div>
+              <span>Propagation-Affected</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-line" style="background:var(--cyan)"></div><span>Normal Route</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-line" style="background:var(--red)"></div><span>Delayed Route</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-line" style="background:var(--gold)"></div><span>Shortest Path</span>
+            </div>
+            <div class="legend-item">
+              <div class="legend-dot small" style="background:var(--green);box-shadow:0 0 6px var(--green)"></div>
+              <span>Live Aircraft</span>
+            </div>
+          </div>
+        </div>
+      </div><!-- /right-col -->
+
+    </div><!-- /main -->
+  </div><!-- /app -->
+
+  <!-- Backend offline overlay -->
+  <div id="backend-error-overlay">
+    <div class="error-box">
+      <div class="error-icon">🔌</div>
+      <div class="error-title">BACKEND OFFLINE</div>
+      <p class="error-msg">The Python Flask backend is not running.<br />Please start it before opening the dashboard.
+      </p>
+      <div class="error-code">
+        <div style="color:var(--text-secondary);margin-bottom:6px"># Start the backend:</div>
+        <div>cd C:\Users\Dell\Desktop\DAA</div>
+        <div>python backend/api.py</div>
+        <div style="margin-top:10px;color:var(--text-secondary)"># Then reload this page.</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+
+</html>
