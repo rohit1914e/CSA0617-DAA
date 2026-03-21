@@ -152,14 +152,21 @@ export class NetworkMap {
             const src = idMap[e.source];
             const tgt = idMap[e.target];
             if (!src || !tgt) return;
+
+            // Store references to the live node objects so control points
+            // are always computed from current (post-projection) positions.
             this.aircraft.push({
                 src, tgt,
                 t: (i * 0.15) % 1,
-                speed: 0.0010 + Math.random() * 0.0008,
+                // ~3× slower so users can hover comfortably
+                speed: 0.0003 + Math.random() * 0.00027,
                 delayed: (e.delay_minutes ?? 0) > 15,
-                trail: [],   // array of {x, y, a} for motion trail
+                delay_minutes: e.delay_minutes ?? 0,
+                trail: [],
                 iata_src: e.source_name,
                 iata_tgt: e.target_name,
+                flight_no: e.flight_no || "—",
+                weather: e.weather || "",
             });
         });
     }
@@ -357,14 +364,27 @@ export class NetworkMap {
         }
     }
 
+    // Compute the Bézier control point dynamically from live node positions.
+    // Same formula as _drawEdges so aircraft always follow the visible arc.
+    _acControlPoint(ac) {
+        return {
+            cpx: (ac.src.x + ac.tgt.x) / 2 + (ac.tgt.y - ac.src.y) * 0.15,
+            cpy: (ac.src.y + ac.tgt.y) / 2 - (ac.tgt.x - ac.src.x) * 0.15,
+        };
+    }
+
     _drawAircraft(ctx) {
         const TRAIL_LEN = 14;
         this.aircraft.forEach((ac) => {
-            const prevT = ac.t;
             ac.t = (ac.t + ac.speed) % 1;
+            const t = ac.t;
 
-            const x = ac.src.x + (ac.tgt.x - ac.src.x) * ac.t;
-            const y = ac.src.y + (ac.tgt.y - ac.src.y) * ac.t;
+            // ── Quadratic Bézier position — computed from LIVE node coords ──
+            // B(t) = (1-t)²·P0 + 2(1-t)t·CP + t²·P1
+            const { cpx, cpy } = this._acControlPoint(ac);
+            const mt = 1 - t;
+            const x = mt * mt * ac.src.x + 2 * mt * t * cpx + t * t * ac.tgt.x;
+            const y = mt * mt * ac.src.y + 2 * mt * t * cpy + t * t * ac.tgt.y;
 
             // Trail positions
             ac.trail.push({ x, y });
@@ -552,20 +572,91 @@ export class NetworkMap {
         return this.nodes.find((n) => Math.hypot(n.x - mx, n.y - my) < 18);
     }
 
+    // Find the closest edge whose bezier curve is within ~8px of the mouse
+    _findEdgeAt(e) {
+        const { x: mx, y: my } = this._canvasCoords(e);
+        const idMap = this._idMap();
+        let bestEdge = null, bestDist = 10; // threshold px
+        this.edges.forEach((edge) => {
+            const src = idMap[edge.source];
+            const tgt = idMap[edge.target];
+            if (!src || !tgt) return;
+            const cpx = (src.x + tgt.x) / 2 + (tgt.y - src.y) * 0.15;
+            const cpy = (src.y + tgt.y) / 2 - (tgt.x - src.x) * 0.15;
+            // Sample 20 points along the quadratic bezier
+            for (let ti = 0; ti <= 20; ti++) {
+                const t = ti / 20;
+                const bx = (1 - t) * (1 - t) * src.x + 2 * (1 - t) * t * cpx + t * t * tgt.x;
+                const by = (1 - t) * (1 - t) * src.y + 2 * (1 - t) * t * cpy + t * t * tgt.y;
+                const d = Math.hypot(bx - mx, by - my);
+                if (d < bestDist) { bestDist = d; bestEdge = edge; }
+            }
+        });
+        return bestEdge;
+    }
+
+    // Find the aircraft dot closest to the mouse (using Bézier position)
+    _findAircraftAt(e) {
+        const { x: mx, y: my } = this._canvasCoords(e);
+        let best = null, bestD = 14;  // slightly larger threshold for easier hover
+        this.aircraft.forEach((ac) => {
+            const { cpx, cpy } = this._acControlPoint(ac);
+            const mt = 1 - ac.t;
+            const x = mt * mt * ac.src.x + 2 * mt * ac.t * cpx + ac.t * ac.t * ac.tgt.x;
+            const y = mt * mt * ac.src.y + 2 * mt * ac.t * cpy + ac.t * ac.t * ac.tgt.y;
+            const d = Math.hypot(x - mx, y - my);
+            if (d < bestD) { bestD = d; best = ac; }
+        });
+        return best;
+    }
+
     _handleHover(e) {
-        const hit = this._findNodeAt(e);
+        const nodeHit = this._findNodeAt(e);
         const prevHovered = this._hoveredIata;
-        this._hoveredIata = hit?.iata || null;
+        this._hoveredIata = nodeHit?.iata || null;
 
         if (this._hoveredIata !== prevHovered) {
-            this.canvas.style.cursor = hit ? "pointer" : (this._drag ? "grabbing" : "grab");
+            this.canvas.style.cursor = nodeHit ? "pointer" : (this._drag ? "grabbing" : "grab");
         }
 
-        if (hit) {
-            this._showTooltip(e, hit);
-        } else {
-            this._hideTooltip();
+        if (nodeHit) {
+            this._showTooltip(e, nodeHit);
+            return;
         }
+
+        // Check aircraft dots next
+        const acHit = this._findAircraftAt(e);
+        if (acHit) {
+            this.canvas.style.cursor = "pointer";
+            this._showFlightTooltip(e, {
+                flight_no: acHit.flight_no || "—",
+                from: acHit.iata_src,
+                to: acHit.iata_tgt,
+                delayed: acHit.delayed,
+                delay_minutes: acHit.delay_minutes ?? 0,
+                weather: acHit.weather || "",
+            });
+            return;
+        }
+
+        // Check edge paths last
+        if (!this._drag) {
+            const edgeHit = this._findEdgeAt(e);
+            if (edgeHit) {
+                this.canvas.style.cursor = "pointer";
+                this._showFlightTooltip(e, {
+                    flight_no: edgeHit.flight_no || "—",
+                    from: edgeHit.source_name,
+                    to: edgeHit.target_name,
+                    delayed: (edgeHit.delay_minutes ?? 0) > 15,
+                    delay_minutes: edgeHit.delay_minutes ?? 0,
+                    weather: edgeHit.weather || "",
+                });
+                return;
+            }
+        }
+
+        this._hideTooltip();
     }
 
     _handleClick(e) {
@@ -578,6 +669,9 @@ export class NetworkMap {
     }
 
     _showTooltip(e, node) {
+        // Hide the flight tooltip if showing
+        this._hideFlightTooltip();
+
         const tip = document.getElementById("airport-tooltip");
         if (!tip) return;
 
@@ -604,8 +698,69 @@ export class NetworkMap {
         tip.classList.remove("hidden");
     }
 
+    /** Show a styled flight tooltip for an edge or aircraft. */
+    _showFlightTooltip(e, info) {
+        // Hide the airport tooltip
+        document.getElementById("airport-tooltip")?.classList.add("hidden");
+
+        let tip = document.getElementById("flight-hover-tooltip");
+        if (!tip) {
+            tip = document.createElement("div");
+            tip.id = "flight-hover-tooltip";
+            document.body.appendChild(tip);
+        }
+
+        const isDelayed = info.delayed;
+        const accentColor = isDelayed ? "#ff3d5a" : "#00b4ff";
+        const bgColor = isDelayed ? "rgba(40,5,10,0.97)" : "rgba(3,18,36,0.97)";
+        const statusLabel = isDelayed ? "⚠ DELAYED" : "✓ ON TIME";
+        const delayLine = isDelayed
+            ? `<div class="fht-delay-reason"><span style="color:#ff3d5a;font-weight:700">Delay: ${info.delay_minutes} min${info.weather ? ` · ${info.weather}` : ""}</span></div>`
+            : `<div class="fht-delay-reason" style="color:#00b4ff;">No delay reported</div>`;
+
+        tip.innerHTML = `
+          <div class="fht-header" style="border-color:${accentColor}">
+            <span class="fht-flight-no" style="color:${accentColor}">${info.flight_no}</span>
+            <span class="fht-status" style="color:${accentColor}">${statusLabel}</span>
+          </div>
+          <div class="fht-route">
+            <span class="fht-airport">${info.from}</span>
+            <span class="fht-arrow">✈</span>
+            <span class="fht-airport">${info.to}</span>
+          </div>
+          ${delayLine}
+        `;
+
+        tip.style.cssText = `
+          position: fixed;
+          z-index: 9000;
+          background: ${bgColor};
+          border: 1.5px solid ${accentColor};
+          border-radius: 10px;
+          padding: 10px 14px;
+          box-shadow: 0 0 20px ${accentColor}40, 0 4px 24px rgba(0,0,0,0.7);
+          pointer-events: none;
+          font-family: 'Rajdhani', monospace;
+          min-width: 190px;
+          backdrop-filter: blur(10px);
+          transition: opacity 0.12s ease;
+        `;
+
+        const tx = Math.min(e.clientX + 16, window.innerWidth - 220);
+        const ty = Math.min(e.clientY + 12, window.innerHeight - 110);
+        tip.style.left = tx + "px";
+        tip.style.top = ty + "px";
+        tip.style.opacity = "1";
+    }
+
+    _hideFlightTooltip() {
+        const tip = document.getElementById("flight-hover-tooltip");
+        if (tip) tip.style.opacity = "0";
+    }
+
     _hideTooltip() {
         document.getElementById("airport-tooltip")?.classList.add("hidden");
+        this._hideFlightTooltip();
     }
 
     _resize() {

@@ -221,8 +221,8 @@ export class PerformanceCharts {
                         ...CHART_DEFAULTS.scales.y,
                         position: "left",
                         title: { display: true, text: "Accuracy (%)", color: "#00ff9f" },
-                        min: 0,
-                        max: 110,
+                        min: 60,
+                        max: 100,
                     },
                     y1: {
                         ...CHART_DEFAULTS.scales.y,

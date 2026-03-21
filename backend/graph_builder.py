@@ -6,7 +6,11 @@ Step 2 — Airport Graph Construction
 Airports  = nodes (vertices V)
 Flights   = directed edges (E)
 
-Edge weight = delay_minutes + weather_impact * 5
+Edge weight = realistic_flight_duration_minutes + small delay penalty
+  - Flight duration estimated via haversine great-circle distance at
+    750 km/h cruise speed + 25 min ground overhead.
+  - A fraction of the original delay/weather penalty is added so that
+    Floyd-Warshall prefers less-delayed routes among equal-distance ones.
 
 Builds:
   - airport_index  : {name -> int id}
@@ -24,6 +28,26 @@ from typing import Dict, List, Tuple
 from data_loader import Flight
 
 INF = math.inf
+
+
+# ── Haversine / flight-duration helper ─────────────────────────────────────────
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two lat/lon points."""
+    R = 6371.0  # Earth radius km
+    dLat = math.radians(lat2 - lat1)
+    dLon = math.radians(lon2 - lon1)
+    a = (math.sin(dLat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dLon / 2) ** 2)
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def _flight_duration_mins(dist_km: float) -> float:
+    """Estimate realistic flight time: 750 km/h cruise + 25 min overhead."""
+    CRUISE_KM_PER_MIN = 750.0 / 60.0  # ~12.5 km/min
+    OVERHEAD = 25.0
+    return max(35.0, dist_km / CRUISE_KM_PER_MIN + OVERHEAD)
 
 
 @dataclass
@@ -109,25 +133,41 @@ def build_graph(flights: List[Flight]) -> AirportGraph:
     # ── 3. Initialise adjacency list (O(V)) ───────────────────────────────────
     adj_list: Dict[int, List[Tuple]] = {i: [] for i in range(V)}
 
-    # ── 4. Insert edges (O(E)) ────────────────────────────────────────────────
+    # ── 4. Coordinates (needed for geo-distance edge weights) ─────────────────
+    coordinates = {ap: _get_coords(ap) for ap in airports_list}
+
+    # ── 5. Insert edges (O(E)) ────────────────────────────────────────────────
+    #
+    # We use two different weights:
+    #   adj_w  — original delay-based weight (kept for compatibility with
+    #            delay propagation / predictions that rely on delay values)
+    #   geo_w  — geographic flight duration + small delay penalty
+    #            (used in weight_matrix → Floyd-Warshall shortest path)
+    #
     edge_count = 0
     for f in flights:
         u = airport_index[f.origin]
         v = airport_index[f.destination]
-        w = float(f.edge_weight)
+        adj_w = float(f.edge_weight)  # original: delay + weather*5
+
+        # Geographic weight: realistic flight time + 10% of delay penalty
+        c1 = coordinates.get(f.origin)
+        c2 = coordinates.get(f.destination)
+        if c1 and c2:
+            dist_km = _haversine_km(c1[0], c1[1], c2[0], c2[1])
+            geo_w = _flight_duration_mins(dist_km) + adj_w * 0.1
+        else:
+            geo_w = adj_w  # fallback
 
         adj_list[u].append(
-            (v, w, f.flight_no, f.weather_impact, f.delay_minutes, f.weather_condition)
+            (v, adj_w, f.flight_no, f.weather_impact, f.delay_minutes, f.weather_condition)
         )
 
         # Keep minimum weight for multi-flight routes (same OD pair, pick best)
-        if w < weight_matrix[u][v]:
-            weight_matrix[u][v] = w
+        if geo_w < weight_matrix[u][v]:
+            weight_matrix[u][v] = geo_w
 
         edge_count += 1
-
-    # ── 5. Coordinates ────────────────────────────────────────────────────────
-    coordinates = {ap: _get_coords(ap) for ap in airports_list}
 
     return AirportGraph(
         airport_index=airport_index,

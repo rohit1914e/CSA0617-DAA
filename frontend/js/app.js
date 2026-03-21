@@ -1,18 +1,10 @@
 /**
- * app.js  v3
+ * app.js  v5
  * ==========
- * Bootstrap: startup loader → particle background → dashboard init
+ * Single scrollable page:  Loader → Hero + Working Dashboard Sections
  *
- * v3 additions
- * ─────────────
- * • AircraftOverlay — persistent glowing SVG plane that stays on screen
- *   across all module transitions (Layer 4, z-index 300)
- * • Scroll-driven / parallax module transitions
- *   Layer 1 — bg grid (canvas)   moves slowest
- *   Layer 2 — network graph       slightly faster
- *   Layer 3 — UI panels           full speed (normal)
- *   Layer 4 — aircraft overlay    independent parallax
- * • Old "plane flies across" transition removed
+ * No tab switching, no separate dashboard view.
+ * All four features are inlined as scrollable sections.
  */
 
 import { NetworkMap } from "./network-map.js";
@@ -107,7 +99,6 @@ function initLoaderParticles() {
 
     const draw = () => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-
         ctx.strokeStyle = "rgba(0,180,255,0.04)";
         ctx.lineWidth = 1;
         for (let x = 0; x < canvas.width; x += 50) {
@@ -116,7 +107,6 @@ function initLoaderParticles() {
         for (let y = 0; y < canvas.height; y += 50) {
             ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
         }
-
         particles.forEach((p) => {
             p.x = (p.x + p.vx + canvas.width) % canvas.width;
             p.y = (p.y + p.vy + canvas.height) % canvas.height;
@@ -129,7 +119,6 @@ function initLoaderParticles() {
             ctx.fill();
         });
         ctx.globalAlpha = 1;
-
         if (!document.getElementById("loader")?.classList.contains("fade-out")) {
             requestAnimationFrame(draw);
         }
@@ -183,7 +172,6 @@ function playRadarBeep() {
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
-
         osc.connect(gain);
         gain.connect(ctx.destination);
         osc.type = "sine";
@@ -212,22 +200,136 @@ function playRadarBeep() {
     } catch (_) { /* Audio not supported — silent fail */ }
 }
 
-// ── Main initialisation ───────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SCROLL & NAVIGATION
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Scroll Reveal with Intersection Observer ──────────────────────────────────
+function initScrollReveal() {
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add("revealed");
+                observer.unobserve(entry.target);
+            }
+        });
+    }, {
+        threshold: 0.1,
+        rootMargin: "0px 0px -40px 0px"
+    });
+
+    document.querySelectorAll(".scroll-reveal").forEach(el => {
+        observer.observe(el);
+    });
+}
+
+// ── Navbar scroll effect + active section highlighting ────────────────────────
+function initNavbarScroll() {
+    const nav = document.getElementById("landing-nav");
+    if (!nav) return;
+
+    const sections = document.querySelectorAll("section[id]");
+    const navLinks = document.querySelectorAll(".landing-nav-link");
+
+    const onScroll = () => {
+        // Frosted glass darken on scroll
+        if (window.scrollY > 80) {
+            nav.classList.add("scrolled");
+        } else {
+            nav.classList.remove("scrolled");
+        }
+
+        // Highlight active section in nav
+        let current = "";
+        sections.forEach(sec => {
+            const top = sec.offsetTop - 120;
+            if (window.scrollY >= top) {
+                current = sec.id;
+            }
+        });
+        navLinks.forEach(link => {
+            link.classList.remove("active");
+            if (link.getAttribute("href") === `#${current}`) {
+                link.classList.add("active");
+            }
+        });
+    };
+
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+}
+
+// ── Smooth scroll for all anchor links ────────────────────────────────────────
+function initSmoothScroll() {
+    document.querySelectorAll('a[href^="#"], button[id="hero-launch-btn"], button[id="nav-launch-btn"]').forEach(el => {
+        el.addEventListener("click", (e) => {
+            let targetId;
+
+            // Launch Dashboard buttons → scroll to network map
+            if (el.id === "hero-launch-btn" || el.id === "nav-launch-btn") {
+                e.preventDefault();
+                targetId = "sec-network";
+            } else {
+                const href = el.getAttribute("href");
+                if (href && href.startsWith("#")) {
+                    e.preventDefault();
+                    targetId = href.slice(1);
+                }
+            }
+
+            if (targetId) {
+                const target = document.getElementById(targetId);
+                if (target) {
+                    target.scrollIntoView({ behavior: "smooth", block: "start" });
+                }
+            }
+        });
+    });
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MAIN INITIALIZATION
+// ══════════════════════════════════════════════════════════════════════════════
+
 document.addEventListener("DOMContentLoaded", () => {
-    runLoader(initDashboard);
+    runLoader(() => {
+        // Show the main page
+        const mainPage = document.getElementById("main-page");
+        mainPage.classList.remove("main-page-hidden");
+        mainPage.classList.add("main-page-visible");
+
+        // Start particles
+        initParticles();
+
+        // Init scroll features
+        initScrollReveal();
+        initNavbarScroll();
+        initSmoothScroll();
+
+        // Init live clock
+        const clockEl = document.getElementById("hud-clock");
+        if (clockEl) {
+            const tick = () => {
+                clockEl.textContent = new Date().toLocaleTimeString("en-US", { hour12: false });
+            };
+            tick();
+            setInterval(tick, 1000);
+        }
+
+        // Initialize all dashboard components
+        initAllDashboard();
+    });
 });
 
-async function initDashboard() {
-    const appEl = document.getElementById("app");
-    appEl?.classList.remove("app-hidden");
-    appEl?.classList.add("app-visible");
 
-    initParticles();
-
+// ── Dashboard core init ───────────────────────────────────────────────────────
+async function initAllDashboard() {
     // ── NetworkMap instances ──────────────────────────────────────────────────
     mapMain = new NetworkMap("network-canvas");
-    mapProp = new NetworkMap("prop-canvas");
     mapSP = new NetworkMap("sp-canvas");
+    mapProp = new NetworkMap("prop-canvas");
 
     // ── Delay Propagation panel ───────────────────────────────────────────────
     delayPanel = new DelayPropagationPanel(mapProp, {
@@ -276,7 +378,7 @@ async function initDashboard() {
 
         const airports = airportsData.airports || [];
         delayPanel.populateAirports(airports);
-        shortestPathPanel.populateAirports(airports);
+        shortestPathPanel.populateAirports(airports, graphData);
 
         updateNetworkStats(graphData);
         setConnectionStatus("connected");
@@ -287,116 +389,6 @@ async function initDashboard() {
         setConnectionStatus("error");
         console.error("[app] Backend connection failed:", err);
         showBackendError();
-    }
-
-    // ── Tab navigation with smooth parallax transitions ───────────────────────
-    document.querySelectorAll(".tab-btn").forEach((btn) => {
-        btn.addEventListener("click", () => {
-            const target = btn.dataset.tab;
-            _switchTab(target);
-        });
-    });
-
-    // ── Keyboard shortcuts ────────────────────────────────────────────────────
-    document.addEventListener("keydown", (e) => {
-        if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
-        const tabMap = { "1": "map", "2": "propagation", "3": "shortest", "4": "performance" };
-        if (tabMap[e.key]) _switchTab(tabMap[e.key]);
-    });
-
-    // ── Live clock ────────────────────────────────────────────────────────────
-    const clockEl = document.getElementById("hud-clock");
-    if (clockEl) {
-        const tick = () => {
-            clockEl.textContent = new Date().toLocaleTimeString("en-US", { hour12: false });
-        };
-        tick();
-        setInterval(tick, 1000);
-    }
-}
-
-// ── Smooth parallax tab switch ────────────────────────────────────────────────
-let _currentTab = "map";
-let _transitioning = false;
-
-function _switchTab(target) {
-    if (target === _currentTab || _transitioning) return;
-    _transitioning = true;
-    _currentTab = target;
-
-    const allBtns = document.querySelectorAll(".tab-btn");
-    const allPanels = document.querySelectorAll(".tab-panel");
-
-    // Active button
-    allBtns.forEach((b) => b.classList.toggle("active", b.dataset.tab === target));
-
-    // ── Phase 1: slide-out current panel ──────────────────────────────────────
-    const activePanel = document.querySelector(".tab-panel.active");
-    if (activePanel) {
-        activePanel.classList.add("panel-exit");
-        activePanel.style.setProperty("--slide-dir", "-1");
-    }
-
-    // ── Notify aircraft overlay ───────────────────────────────────────────────
-    // (overlay removed)
-
-    // ── Parallax: shift the background grid subtly ───────────────────────────
-    _shiftParallaxLayers(target);
-
-    setTimeout(() => {
-        // Hide exiting panel
-        allPanels.forEach((p) => {
-            p.classList.remove("active", "panel-exit", "panel-enter");
-        });
-
-        // Show new panel with enter animation
-        const nextPanel = document.getElementById(`tab-${target}`);
-        if (nextPanel) {
-            nextPanel.classList.add("active", "panel-enter");
-            // Re-project maps
-            setTimeout(() => {
-                [mapMain, mapProp, mapSP].forEach((m) => m._resize());
-                nextPanel.classList.remove("panel-enter");
-                _transitioning = false;
-            }, 450);
-        } else {
-            _transitioning = false;
-        }
-
-        if (target === "performance") perfCharts.load();
-    }, 280);
-}
-
-// ── Parallax shift based on module ───────────────────────────────────────────
-// Moves background layers (grid canvas, particle canvas) independently
-// from the UI panels, creating depth.
-const _parallaxOffsets = {
-    map: { x: 0, y: 0, scaleBoost: 1.0 },
-    propagation: { x: -18, y: 8, scaleBoost: 1.04 },
-    shortest: { x: 14, y: -6, scaleBoost: 1.02 },
-    performance: { x: 0, y: 20, scaleBoost: 0.98 },
-};
-
-function _shiftParallaxLayers(target) {
-    const off = _parallaxOffsets[target] ?? { x: 0, y: 0, scaleBoost: 1 };
-
-    // Layer 1 — background grid canvas (slowest, 0.3× speed)
-    const pc = document.getElementById("particle-canvas");
-    if (pc) {
-        pc.style.transition = "transform 0.7s cubic-bezier(0.25,0.46,0.45,0.94)";
-        pc.style.transform = `translate(${off.x * 0.3}px, ${off.y * 0.3}px)`;
-    }
-
-    // Layer 2 — left col (network map + panels, 0.7× speed)
-    const leftCol = document.getElementById("left-col");
-    if (leftCol) {
-        leftCol.style.transition = "transform 0.55s cubic-bezier(0.25,0.46,0.45,0.94)";
-        leftCol.style.transform = `translate(${off.x * 0.12}px, ${off.y * 0.12}px) scale(${off.scaleBoost})`;
-        // Reset after settling
-        setTimeout(() => {
-            leftCol.style.transition = "transform 0.8s cubic-bezier(0.25,0.46,0.45,0.94)";
-            leftCol.style.transform = "translate(0,0) scale(1)";
-        }, 600);
     }
 }
 
