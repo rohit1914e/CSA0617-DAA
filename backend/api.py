@@ -7,7 +7,7 @@ ROOT = pathlib.Path(__file__).parent.parent
 BACKEND = pathlib.Path(__file__).parent
 sys.path.insert(0, str(BACKEND))
 
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request
 from flask_cors import CORS
 
 from data_loader        import load_flights, get_weather_summary, get_route_delays
@@ -16,41 +16,49 @@ from floyd_warshall     import FloydWarshall
 from delay_propagation  import DelayPropagation
 from prediction         import PredictionEngine, generate_performance_benchmarks
 
+# ✅ FIXED STATIC PATH (IMPORTANT)
 app = Flask(__name__, static_folder=str(ROOT / "frontend"), static_url_path="")
 CORS(app)
 
+# ── Load Data ──
 CSV_PATH = str(ROOT / "data" / "flights.csv")
 print(f"[API] Loading dataset from {CSV_PATH} …")
 t0 = time.perf_counter()
 df, FLIGHTS = load_flights(CSV_PATH)
 print(f"[API] Loaded {len(FLIGHTS)} flights in {(time.perf_counter()-t0)*1000:.1f} ms")
 
+# ── Build Graph ──
 t0 = time.perf_counter()
 GRAPH = build_graph(FLIGHTS)
 GRAPH_BUILD_MS = round((time.perf_counter() - t0) * 1000, 3)
 print(f"[API] Graph built: {GRAPH.num_vertices} airports, {GRAPH.num_edges} edges in {GRAPH_BUILD_MS} ms")
 
+# ── Floyd Warshall ──
 t0 = time.perf_counter()
 FW = FloydWarshall(GRAPH)
 FW.compute()
 FW_MS = round((time.perf_counter() - t0) * 1000, 3)
 print(f"[API] Floyd-Warshall computed in {FW_MS} ms")
 
-_last_simulation: dict = {
+# ── Cache ──
+_last_simulation = {
     "steps": [],
     "predictions": {},
     "params": {},
 }
 
+# ── Benchmarks ──
 print("[API] Generating performance benchmarks …")
 t0 = time.perf_counter()
 BENCHMARKS = generate_performance_benchmarks(GRAPH, FLIGHTS)
 print(f"[API] Benchmarks ready in {(time.perf_counter()-t0)*1000:.0f} ms")
 
 
+# ================= ROUTES =================
+
 @app.route("/")
 def index():
-    return send_from_directory(str(ROOT / "frontend"), "index.html")
+    return app.send_static_file("index.html")
 
 
 @app.route("/health")
@@ -109,15 +117,13 @@ def api_simulate_delay():
         "time_of_day": time_of_day,
     }
 
-    return jsonify(
-        {
-            "propagation_steps": steps,
-            "affected_airports": sim.get_affected_airports(steps),
-            "chain": sim.get_propagation_chain(steps),
-            "prediction_summary": pred_result.get("statistics", {}),
-            "params": _last_simulation["params"],
-        }
-    )
+    return jsonify({
+        "propagation_steps": steps,
+        "affected_airports": sim.get_affected_airports(steps),
+        "chain": sim.get_propagation_chain(steps),
+        "prediction_summary": pred_result.get("statistics", {}),
+        "params": _last_simulation["params"],
+    })
 
 
 @app.route("/api/predictions")
@@ -134,15 +140,13 @@ def api_predictions():
 
 @app.route("/api/performance")
 def api_performance():
-    return jsonify(
-        {
-            **BENCHMARKS,
-            "startup_times": {
-                "graph_build_ms": GRAPH_BUILD_MS,
-                "floyd_warshall_ms": FW_MS,
-            },
-        }
-    )
+    return jsonify({
+        **BENCHMARKS,
+        "startup_times": {
+            "graph_build_ms": GRAPH_BUILD_MS,
+            "floyd_warshall_ms": FW_MS,
+        },
+    })
 
 
 @app.route("/api/airports")
@@ -150,7 +154,8 @@ def api_airports():
     return jsonify({"airports": GRAPH.airports_list})
 
 
-# ✅ FIXED PART (RENDER COMPATIBLE)
+# ================= RUN =================
+
 if __name__ == "__main__":
     print("\n" + "=" * 60)
     print("  Flight Delay Prediction System — Backend API")
